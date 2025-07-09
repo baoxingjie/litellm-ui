@@ -49,7 +49,11 @@ class MyLLM:
         if not model_config:
             return False, f"不支持的模型: {model_key}", None
         
-        # 检查 API 密钥
+        # 对于 Ollama 模型，不需要检查 API 密钥
+        if model_config.provider == "ollama":
+            return True, "", model_config
+        
+        # 检查其他模型的 API 密钥
         if not os.getenv(model_config.api_key_env):
             return False, f"模型 {model_config.display_name} 未配置 API 密钥", None
         

@@ -84,6 +84,15 @@ class Config:
             model_name="huggingface/together/deepseek-ai/DeepSeek-R1",
             api_key_env="HF_TOKEN",
             custom_llm_provider="huggingface"
+        ),
+        ModelConfig(
+            name="qwq",
+            display_name="Ollama QwQ",
+            provider="ollama",
+            model_name="ollama/qwq",
+            api_key_env="OLLAMA_API_KEY",
+            base_url="http://localhost:11434",
+            enabled=True
         )
     ]
     
@@ -92,8 +101,11 @@ class Config:
         """获取已启用的模型列表"""
         enabled_models = []
         for model in cls.MODELS:
-            # 检查 API 密钥是否存在
-            if os.getenv(model.api_key_env) and model.enabled:
+            # 对于 Ollama 模型，不需要检查 API 密钥
+            if model.provider == "ollama" and model.enabled:
+                enabled_models.append(model)
+            # 检查其他模型的 API 密钥是否存在
+            elif os.getenv(model.api_key_env) and model.enabled:
                 enabled_models.append(model)
         return enabled_models
     
