@@ -102,7 +102,7 @@
             color: white;
         }
 
-        .stream-toggle {
+        .stream-toggle, .web-search-toggle {
             display: flex;
             align-items: center;
         }
@@ -442,6 +442,13 @@
                         <span class="toggle-text">流式输出</span>
                     </label>
                 </div>
+                <div class="web-search-toggle">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="webSearchToggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-text">联网查询</span>
+                    </label>
+                </div>
             </div>
         </div>
         
@@ -477,6 +484,7 @@
         const sendButton = document.getElementById('sendButton');
         const modelSelector = document.getElementById('modelSelector');
         const streamToggle = document.getElementById('streamToggle');
+        const webSearchToggle = document.getElementById('webSearchToggle');
         
         let currentStreamingMessage = null;
 
@@ -684,6 +692,7 @@
             
             const selectedModel = modelSelector.value;
             const isStreaming = streamToggle.checked;
+            const isWebSearch = webSearchToggle.checked;
             const modelDisplayName = modelSelector.options[modelSelector.selectedIndex].text;
             
             // 添加用户消息
@@ -699,10 +708,10 @@
             
             if (isStreaming) {
                 // 流式模式
-                await handleStreamingChat(message, selectedModel, modelDisplayName);
+                await handleStreamingChat(message, selectedModel, modelDisplayName, isWebSearch);
             } else {
                 // 非流式模式
-                await handleNormalChat(message, selectedModel, modelDisplayName);
+                await handleNormalChat(message, selectedModel, modelDisplayName, isWebSearch);
             }
             
             // 恢复发送按钮
@@ -712,7 +721,7 @@
         });
         
         // 处理非流式聊天
-        async function handleNormalChat(message, selectedModel, modelDisplayName) {
+        async function handleNormalChat(message, selectedModel, modelDisplayName, isWebSearch = false) {
             // 显示加载状态
             showLoading();
             
@@ -725,7 +734,8 @@
                     body: JSON.stringify({
                         message: message,
                         model: selectedModel,
-                        stream: false
+                        stream: false,
+                        web_search: isWebSearch
                     })
                 });
                 
@@ -746,7 +756,7 @@
         }
         
         // 处理流式聊天
-        async function handleStreamingChat(message, selectedModel, modelDisplayName) {
+        async function handleStreamingChat(message, selectedModel, modelDisplayName, isWebSearch = false) {
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
@@ -756,7 +766,8 @@
                     body: JSON.stringify({
                         message: message,
                         model: selectedModel,
-                        stream: true
+                        stream: true,
+                        web_search: isWebSearch
                     })
                 });
                 

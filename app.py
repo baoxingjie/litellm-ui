@@ -9,9 +9,10 @@ import os
 import time
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
-import litellm
 from config import Config
 from logger import logger
+from web_search import web_search_tool
+from myllm import myllm
 
 # 加载环境变量
 load_dotenv()
@@ -43,7 +44,7 @@ if os.getenv("AZURE_API_VERSION"):
     os.environ["AZURE_API_VERSION"] = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
 
 # 获取可用模型
-available_models = Config.get_enabled_models()
+available_models = myllm.get_available_models()
 logger.info(f"已加载 {len(available_models)} 个可用模型")
 
 @app.route('/')
@@ -60,54 +61,45 @@ def chat():
         message = data.get('message', '').strip()
         model_key = data.get('model', 'gpt-4o')
         is_stream = data.get('stream', False)
+        is_web_search = data.get('web_search', False)
         
         if not message:
             logger.warning(f"收到空消息请求 - 模型: {model_key}")
             return jsonify({'error': '消息不能为空'}), 400
         
-        # 查找模型配置
-        model_config = Config.get_model_by_name(model_key)
-        if not model_config:
-            logger.error(f"不支持的模型: {model_key}")
-            return jsonify({'error': '不支持的模型'}), 400
+        # 验证模型
+        is_valid, error_msg, model_config = myllm.validate_model(model_key)
+        if not is_valid:
+            logger.error(f"模型验证失败: {error_msg}")
+            return jsonify({'error': error_msg}), 400
         
-        # 检查 API 密钥
-        if not os.getenv(model_config.api_key_env):
-            logger.error(f"模型 {model_key} 缺少 API 密钥: {model_config.api_key_env}")
-            return jsonify({'error': f'模型 {model_config.display_name} 未配置 API 密钥'}), 400
+        logger.info(f"处理聊天请求 - 模型: {model_config.display_name}, 消息长度: {len(message)}, 流式: {is_stream}, 联网查询: {is_web_search}")
         
-        logger.info(f"处理聊天请求 - 模型: {model_config.display_name}, 消息长度: {len(message)}, 流式: {is_stream}")
+        # 处理联网查询
+        if is_web_search:
+            try:
+                enhanced_prompt, search_results = web_search_tool.perform_web_search(message)
+                messages = [{'role': 'user', 'content': enhanced_prompt}]
+                logger.info(f"联网查询完成，获取到 {len(search_results)} 条搜索结果")
+            except Exception as e:
+                logger.error(f"联网查询失败: {e}")
+                messages = [{'role': 'user', 'content': message}]
+        else:
+            messages = [{'role': 'user', 'content': message}]
         
-        messages = [{'role': 'user', 'content': message}]
-        
-        # 构建请求参数
-        completion_params = {
-            'model': model_config.model_name,
-            'messages': messages,
+        # 使用统一的模型调用接口
+        completion_kwargs = {
             'max_tokens': Config.MAX_TOKENS,
             'temperature': Config.TEMPERATURE,
             'stream': is_stream
         }
         
-        # 添加特定模型的配置
-        if model_config.base_url:
-            completion_params['base_url'] = model_config.base_url
-            # 对于使用base_url的模型，需要显式传递api_key
-            completion_params['api_key'] = os.getenv(model_config.api_key_env)
-        
-        if model_config.custom_llm_provider:
-            completion_params['custom_llm_provider'] = model_config.custom_llm_provider
-        
-        # 对于某些模型，设置较低的温度
-        if 'azure' in model_config.model_name or 'qwen' in model_config.model_name:
-            completion_params['temperature'] = 0.1
-        
         if is_stream:
             # 流式响应
-            return handle_streaming_response(completion_params, model_config, start_time)
+            return handle_streaming_response(model_key, messages, completion_kwargs, model_config, start_time)
         else:
             # 非流式响应
-            return handle_normal_response(completion_params, model_config, start_time)
+            return handle_normal_response(model_key, messages, completion_kwargs, model_config, start_time)
             
     except Exception as e:
         response_time = time.time() - start_time
@@ -116,10 +108,14 @@ def chat():
         logger.log_api_call(model_name, False, response_time, error_msg)
         return jsonify({'error': f'请求失败: {error_msg}'}), 500
 
-def handle_normal_response(completion_params, model_config, start_time):
+def handle_normal_response(model_key, messages, completion_kwargs, model_config, start_time):
     """处理非流式响应"""
     try:
-        response = litellm.completion(**completion_params)
+        response = myllm.completion(
+            model_key=model_key,
+            messages=messages,
+            **completion_kwargs
+        )
         
         # 计算响应时间
         response_time = time.time() - start_time
@@ -138,14 +134,18 @@ def handle_normal_response(completion_params, model_config, start_time):
         logger.log_api_call(model_config.display_name, False, response_time, error_msg)
         return jsonify({'error': f'请求失败: {error_msg}'}), 500
 
-def handle_streaming_response(completion_params, model_config, start_time):
+def handle_streaming_response(model_key, messages, completion_kwargs, model_config, start_time):
     """处理流式响应"""
     from flask import Response
     import json
     
     def generate():
         try:
-            response = litellm.completion(**completion_params)
+            response = myllm.completion(
+                model_key=model_key,
+                messages=messages,
+                **completion_kwargs
+            )
             
             for chunk in response:
                 if chunk.choices and len(chunk.choices) > 0:
