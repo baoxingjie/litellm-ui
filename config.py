@@ -76,6 +76,14 @@ class Config:
             model_name="openai/Baichuan4-turbo",
             api_key_env="BAICHUAN_API_KEY",
             base_url=os.getenv('BAICHUAN_BASE_URL')
+        ),
+        ModelConfig(
+            name="DeepSeek-R1",
+            display_name="Hugging Face DeepSeek-R1",
+            provider="huggingface",
+            model_name="huggingface/together/deepseek-ai/DeepSeek-R1",
+            api_key_env="HF_TOKEN",
+            custom_llm_provider="huggingface"
         )
     ]
     

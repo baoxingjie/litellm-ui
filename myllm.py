@@ -82,6 +82,12 @@ class MyLLM:
         if 'azure' in model_config.model_name or 'qwen' in model_config.model_name:
             completion_params['temperature'] = 0.1
         
+        # 对于 Hugging Face 模型的特殊处理
+        if model_config.provider == 'huggingface':
+            completion_params['api_key'] = os.getenv(model_config.api_key_env)
+            # Hugging Face 模型通常需要较低的温度
+            completion_params['temperature'] = min(completion_params['temperature'], 0.7)
+        
         # 添加额外参数
         completion_params.update(kwargs)
         
