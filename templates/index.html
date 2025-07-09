@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiteLLM Multi-Model Chat</title>
+    <!-- MathJax 支持数学公式渲染 -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['\\(', '\\)'], ['$', '$']],
+                displayMath: [['\\[', '\\]'], ['$$', '$$']]
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+            }
+        };
+    </script>
+    
+    <!-- Marked.js 支持 Markdown 渲染 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    
+    <!-- Highlight.js 支持代码高亮 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+        // 配置 Marked.js
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true
+        });
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .chat-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 800px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .chat-header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .model-selector {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .model-selector option {
+            background: #4f46e5;
+            color: white;
+        }
+
+        .stream-toggle {
+            display: flex;
+            align-items: center;
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: white;
+            font-size: 14px;
+        }
+
+        .toggle-label input[type="checkbox"] {
+            display: none;
+        }
+
+        .toggle-slider {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            transition: background 0.3s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        .toggle-label input[type="checkbox"]:checked + .toggle-slider {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .toggle-label input[type="checkbox"]:checked + .toggle-slider::before {
+            transform: translateX(20px);
+        }
+
+        .toggle-text {
+            user-select: none;
+        }
+
+        .streaming-cursor {
+            animation: blink 1s infinite;
+            color: #4f46e5;
+            font-weight: bold;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8fafc;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant .message-content {
+            background: white;
+            color: #1f2937;
+            border: 1px solid #e5e7eb;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .message-info {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .chat-input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .chat-input {
+            flex: 1;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 16px;
+            resize: none;
+            min-height: 48px;
+            max-height: 120px;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: #4f46e5;
+        }
+
+        .send-button {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            min-width: 80px;
+        }
+
+        .send-button:hover {
+            transform: translateY(-2px);
+        }
+
+        .send-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #6b7280;
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .loading-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #6b7280;
+            animation: loading 1.4s infinite ease-in-out;
+        }
+
+        .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes loading {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        /* Markdown 样式 */
+        .message-content h1, .message-content h2, .message-content h3,
+        .message-content h4, .message-content h5, .message-content h6 {
+            margin: 16px 0 8px 0;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+        
+        .message-content h1 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 8px; }
+        .message-content h2 { font-size: 1.3em; border-bottom: 1px solid #eaecef; padding-bottom: 6px; }
+        .message-content h3 { font-size: 1.2em; }
+        .message-content h4 { font-size: 1.1em; }
+        .message-content h5 { font-size: 1em; }
+        .message-content h6 { font-size: 0.9em; color: #6a737d; }
+        
+        .message-content p {
+            margin: 8px 0;
+            line-height: 1.6;
+        }
+        
+        .message-content ul, .message-content ol {
+            margin: 8px 0;
+            padding-left: 24px;
+        }
+        
+        .message-content li {
+            margin: 4px 0;
+            line-height: 1.5;
+        }
+        
+        .message-content blockquote {
+            margin: 12px 0;
+            padding: 8px 16px;
+            border-left: 4px solid #dfe2e5;
+            background-color: #f6f8fa;
+            color: #6a737d;
+        }
+        
+        .message-content code {
+            background-color: rgba(27, 31, 35, 0.05);
+            border-radius: 3px;
+            font-size: 85%;
+            margin: 0;
+            padding: 2px 4px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+        
+        .message-content pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            font-size: 85%;
+            line-height: 1.45;
+            overflow: auto;
+            padding: 16px;
+            margin: 12px 0;
+        }
+        
+        .message-content pre code {
+            background-color: transparent;
+            border: 0;
+            display: inline;
+            line-height: inherit;
+            margin: 0;
+            max-width: auto;
+            overflow: visible;
+            padding: 0;
+            word-wrap: normal;
+        }
+        
+        .message-content table {
+            border-collapse: collapse;
+            border-spacing: 0;
+            margin: 12px 0;
+            width: 100%;
+        }
+        
+        .message-content table th,
+        .message-content table td {
+            border: 1px solid #dfe2e5;
+            padding: 6px 13px;
+            text-align: left;
+        }
+        
+        .message-content table th {
+            background-color: #f6f8fa;
+            font-weight: 600;
+        }
+        
+        .message-content table tr:nth-child(2n) {
+            background-color: #f6f8fa;
+        }
+        
+        .message-content hr {
+            background-color: #e1e4e8;
+            border: 0;
+            height: 1px;
+            margin: 24px 0;
+        }
+        
+        .message-content a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+        
+        .message-content a:hover {
+            text-decoration: underline;
+        }
+        
+        .message-content strong {
+            font-weight: 600;
+        }
+        
+        .message-content em {
+            font-style: italic;
+        }
+
+        .error-message {
+            background: #fef2f2;
+            color: #dc2626;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border-left: 4px solid #dc2626;
+        }
+
+        @media (max-width: 768px) {
+            .chat-container {
+                height: 100vh;
+                border-radius: 0;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>🤖 LiteLLM Multi-Model Chat</h1>
+            <div class="header-controls">
+                <select class="model-selector" id="modelSelector">
+                    {% for key, model in models.items() %}
+                    <option value="{{ key }}">{{ model.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="stream-toggle">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="streamToggle" checked>
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-text">流式输出</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant">
+                <div class="message-content">
+                    👋 欢迎使用 LiteLLM 多模型聊天！请选择一个模型开始对话。
+                    <div class="message-info">支持的模型：OpenAI GPT-4o, Anthropic Claude, Azure OpenAI, 阿里云 DashScope, 百川 AI</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chat-input-container">
+            <form class="chat-input-form" id="chatForm">
+                <textarea 
+                    class="chat-input" 
+                    id="messageInput" 
+                    placeholder="输入您的消息..." 
+                    rows="1"
+                    required
+                ></textarea>
+                <button type="submit" class="send-button" id="sendButton">
+                    发送
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const modelSelector = document.getElementById('modelSelector');
+        const streamToggle = document.getElementById('streamToggle');
+        
+        let currentStreamingMessage = null;
+
+        // 自动调整文本框高度
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        // 支持 Shift+Enter 换行，Enter 发送
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // 添加消息到聊天界面
+        function addMessage(content, isUser = false, modelName = '') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            // 处理内容：对于用户消息使用 textContent，对于 AI 回复使用 Markdown 渲染
+            if (isUser) {
+                contentDiv.textContent = content;
+            } else {
+                // 使用 Marked.js 渲染 Markdown 内容
+                try {
+                    const markdownContent = marked.parse(content);
+                    contentDiv.innerHTML = markdownContent;
+                } catch (error) {
+                    console.warn('Markdown 渲染失败，使用纯文本:', error);
+                    // 如果 Markdown 渲染失败，回退到简单的换行处理
+                    const formattedContent = content.replace(/\n/g, '<br>');
+                    contentDiv.innerHTML = formattedContent;
+                }
+            }
+            
+            if (!isUser && modelName) {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'message-info';
+                infoDiv.textContent = `来自 ${modelName}`;
+                contentDiv.appendChild(infoDiv);
+            }
+            
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // 如果是 AI 回复，需要重新处理代码高亮和数学公式
+            if (!isUser) {
+                // 代码高亮
+                if (window.hljs) {
+                    contentDiv.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                }
+                
+                // 重新渲染数学公式
+                if (window.MathJax) {
+                    MathJax.typesetPromise([contentDiv]).catch(function (err) {
+                        console.log('MathJax typeset failed: ' + err.message);
+                    });
+                }
+            }
+            
+            return messageDiv;
+        }
+        
+        // 创建流式消息容器
+        function createStreamingMessage(modelName = '') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            messageDiv.id = 'streamingMessage';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = '<span class="streaming-cursor">▋</span>';
+            
+            if (modelName) {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'message-info';
+                infoDiv.textContent = `来自 ${modelName} (流式输出)`;
+                contentDiv.appendChild(infoDiv);
+            }
+            
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            return { messageDiv, contentDiv };
+        }
+        
+        // 更新流式消息内容
+        function updateStreamingMessage(contentDiv, newContent) {
+            // 移除光标
+            const cursor = contentDiv.querySelector('.streaming-cursor');
+            if (cursor) {
+                cursor.remove();
+            }
+            
+            // 更新内容（保持原始文本，不进行Markdown渲染）
+            const infoDiv = contentDiv.querySelector('.message-info');
+            if (infoDiv) {
+                contentDiv.innerHTML = newContent.replace(/\n/g, '<br>') + '<span class="streaming-cursor">▋</span>';
+                contentDiv.appendChild(infoDiv);
+            } else {
+                contentDiv.innerHTML = newContent.replace(/\n/g, '<br>') + '<span class="streaming-cursor">▋</span>';
+            }
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // 完成流式消息
+        function finishStreamingMessage(contentDiv, finalContent, modelName) {
+            // 移除光标
+            const cursor = contentDiv.querySelector('.streaming-cursor');
+            if (cursor) {
+                cursor.remove();
+            }
+            
+            // 使用 Marked.js 渲染最终的 Markdown 内容
+            try {
+                const markdownContent = marked.parse(finalContent);
+                contentDiv.innerHTML = markdownContent;
+            } catch (error) {
+                console.warn('Markdown 渲染失败，使用纯文本:', error);
+                const formattedContent = finalContent.replace(/\n/g, '<br>');
+                contentDiv.innerHTML = formattedContent;
+            }
+            
+            // 重新添加模型信息
+            if (modelName) {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'message-info';
+                infoDiv.textContent = `来自 ${modelName}`;
+                contentDiv.appendChild(infoDiv);
+            }
+            
+            // 代码高亮
+            if (window.hljs) {
+                contentDiv.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            }
+            
+            // 重新渲染数学公式
+            if (window.MathJax) {
+                MathJax.typesetPromise([contentDiv]).catch(function (err) {
+                    console.log('MathJax typeset failed: ' + err.message);
+                });
+            }
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 显示加载状态
+        function showLoading() {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant';
+            loadingDiv.id = 'loadingMessage';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content loading';
+            contentDiv.innerHTML = `
+                正在思考中
+                <div class="loading-dots">
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                </div>
+            `;
+            
+            loadingDiv.appendChild(contentDiv);
+            chatMessages.appendChild(loadingDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 移除加载状态
+        function hideLoading() {
+            const loadingMessage = document.getElementById('loadingMessage');
+            if (loadingMessage) {
+                loadingMessage.remove();
+            }
+        }
+
+        // 显示错误消息
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            chatMessages.appendChild(errorDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 处理表单提交
+        chatForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            const selectedModel = modelSelector.value;
+            const isStreaming = streamToggle.checked;
+            const modelDisplayName = modelSelector.options[modelSelector.selectedIndex].text;
+            
+            // 添加用户消息
+            addMessage(message, true);
+            
+            // 清空输入框
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            
+            // 禁用发送按钮
+            sendButton.disabled = true;
+            sendButton.textContent = '发送中...';
+            
+            if (isStreaming) {
+                // 流式模式
+                await handleStreamingChat(message, selectedModel, modelDisplayName);
+            } else {
+                // 非流式模式
+                await handleNormalChat(message, selectedModel, modelDisplayName);
+            }
+            
+            // 恢复发送按钮
+            sendButton.disabled = false;
+            sendButton.textContent = '发送';
+            messageInput.focus();
+        });
+        
+        // 处理非流式聊天
+        async function handleNormalChat(message, selectedModel, modelDisplayName) {
+            // 显示加载状态
+            showLoading();
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        model: selectedModel,
+                        stream: false
+                    })
+                });
+                
+                const data = await response.json();
+                
+                hideLoading();
+                
+                if (response.ok) {
+                    addMessage(data.reply, false, modelDisplayName);
+                } else {
+                    showError(data.error || '发生未知错误');
+                }
+                
+            } catch (error) {
+                hideLoading();
+                showError('网络错误，请检查连接后重试');
+            }
+        }
+        
+        // 处理流式聊天
+        async function handleStreamingChat(message, selectedModel, modelDisplayName) {
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        model: selectedModel,
+                        stream: true
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    showError(errorData.error || '发生未知错误');
+                    return;
+                }
+                
+                // 创建流式消息容器
+                const { messageDiv, contentDiv } = createStreamingMessage(modelDisplayName);
+                currentStreamingMessage = { messageDiv, contentDiv };
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullContent = '';
+                
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6).trim();
+                                
+                                if (data === '[DONE]') {
+                                    // 流式传输完成
+                                    finishStreamingMessage(contentDiv, fullContent, modelDisplayName);
+                                    currentStreamingMessage = null;
+                                    return;
+                                }
+                                
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    if (parsed.content) {
+                                        fullContent += parsed.content;
+                                        updateStreamingMessage(contentDiv, fullContent);
+                                    }
+                                } catch (e) {
+                                    // 忽略解析错误
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('流式读取错误:', error);
+                    showError('流式传输中断，请重试');
+                } finally {
+                    reader.releaseLock();
+                    if (currentStreamingMessage) {
+                        finishStreamingMessage(contentDiv, fullContent, modelDisplayName);
+                        currentStreamingMessage = null;
+                    }
+                }
+                
+            } catch (error) {
+                console.error('流式请求错误:', error);
+                showError('网络错误，请检查连接后重试');
+            }
+        }
+
+        // 页面加载完成后聚焦输入框
+        window.addEventListener('load', function() {
+            messageInput.focus();
+        });
+    </script>
+</body>
+</html>
