@@ -4,12 +4,14 @@
 
 ## 功能特性
 
-- 🤖 **多模型支持**：支持 5 种主流 AI 模型
-  - OpenAI GPT-4o
-  - Anthropic Claude 3 Sonnet
+- 🤖 **多模型支持**：支持 7 种主流 AI 模型
+  - OpenAI GPT-4o（暂时屏蔽）
+  - Anthropic Claude 3 Sonnet（暂时屏蔽）
   - Azure OpenAI GPT-4o
-  - 阿里云 DashScope Qwen3
+  - 阿里云 DashScope qwen2.5-72b-instruct
   - 百川 AI Baichuan4-turbo
+  - Hugging Face DeepSeek-R1
+  - Ollama QwQ
 - 🌐 **现代化 Web UI**：美观的聊天界面，支持实时对话
 - 🔄 **模型切换**：可在界面中随时切换不同的 AI 模型
 - 💬 **交互式聊天**：支持多轮对话，类似 ChatGPT 体验
@@ -59,8 +61,10 @@ AZURE_API_KEY=your-actual-azure-api-key
 AZURE_API_BASE=https://your-resource-name.openai.azure.com/
 AZURE_API_VERSION=2024-08-01-preview
 DASHSCOPE_API_KEY=your-actual-dashscope-api-key
-BAICHUAN_API_KEY=your-actual-baichuan-api-key
-BAICHUAN_BASE_URL=https://api.baichuan-ai.com/v1/
+BACHUAN_API_KEY=your-actual-baichuan-api-key
+BACHUAN_BASE_URL=https://api.baichuan-ai.com/v1/
+HF_TOKEN=your-actual-huggingface-token
+OLLAMA_API_KEY=your-actual-ollama-api-key
 ```
 
 ## 使用方法
@@ -164,14 +168,18 @@ litellm-ui/
 
 ## 注意事项
 
-- 请确保您有有效的 OpenAI、Anthropic、Azure OpenAI、阿里云 DashScope 和百川 AI API 密钥
+- 请确保您有有效的 API 密钥（根据需要使用的模型）
 - 对于 Azure OpenAI，需要先在 Azure 门户中创建 OpenAI 资源并部署模型
 - 对于阿里云 DashScope，需要在阿里云控制台开通 DashScope 服务并获取 API 密钥
 - 对于百川 AI，需要在百川智能官网注册账号并获取 API 密钥
+- 对于 Hugging Face，需要在 HuggingFace 官网注册账号并获取访问令牌
+- 对于 Ollama，需要本地安装 Ollama 服务（默认运行在 localhost:11434）
 - API 调用可能会产生费用，请注意使用量
 - 不要将真实的 API 密钥提交到版本控制系统中
 - Azure OpenAI 的 API Base URL 格式为：`https://your-resource-name.openai.azure.com/`
-- 阿里云 DashScope 支持多种模型，如 qwen-turbo、qwen-plus、qwen-max 等
-- 百川 AI 支持多种模型，如 Baichuan4-turbo、Baichuan3-turbo 等
+- 阿里云 DashScope 当前使用 qwen2.5-72b-instruct 模型
+- 百川 AI 当前使用 Baichuan4-turbo 模型
+- Hugging Face 当前使用 DeepSeek-R1 模型
+- Ollama 当前使用 QwQ 模型，需要本地安装 Ollama 并下载相应模型
 - 建议定期运行 `test_models.py` 检查模型状态
 - 查看 `logs/app.log` 了解详细的运行日志

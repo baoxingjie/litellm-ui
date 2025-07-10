@@ -31,7 +31,6 @@ PYTHONPATH
 venv/
 ENV/
 env/
-activate_venv.sh
 
 # 日志文件
 logs/
