@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 联网查询模块
-实现意图分析、Bing搜索和结果整合功能
+实现意图分析、Bing搜索、阿里云IQS搜索和结果整合功能
 """
 
 import os
@@ -12,10 +12,60 @@ from typing import List, Dict, Any
 from logger import logger
 from myllm import myllm
 
+# 阿里云IQS相关导入
+try:
+    from Tea.exceptions import TeaException
+    from alibabacloud_iqs20241111 import models
+    from alibabacloud_iqs20241111.client import Client
+    from alibabacloud_tea_openapi import models as open_api_models
+    KUAKE_AVAILABLE = True
+except ImportError:
+    KUAKE_AVAILABLE = False
+    logger.warning("阿里云IQS SDK未安装，将仅支持Bing搜索")
+
 class WebSearchTool:
     def __init__(self):
+        # Bing搜索配置
         self.bing_api_key = os.getenv('BING_SEARCH_API_KEY')
         self.bing_search_url = "https://api.bing.microsoft.com/v7.0/search"
+        
+        # 阿里云IQS配置
+        self.aliyun_access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
+        self.aliyun_access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
+        
+        # 搜索引擎选择配置
+        self.default_search_engine = os.getenv('DEFAULT_SEARCH_ENGINE', 'bing').lower()
+        
+        # 验证配置
+        self._validate_config()
+        
+    def _validate_config(self):
+        """验证搜索引擎配置"""
+        if self.default_search_engine == 'bing':
+            if not self.bing_api_key:
+                logger.warning("Bing API密钥未配置，将尝试使用阿里云IQS")
+                if KUAKE_AVAILABLE and self.aliyun_access_key_id and self.aliyun_access_key_secret:
+                    self.default_search_engine = 'kuake'
+                else:
+                    logger.error("没有可用的搜索引擎配置")
+        elif self.default_search_engine == 'kuake':
+            if not KUAKE_AVAILABLE:
+                logger.warning("阿里云IQS SDK未安装，切换到Bing搜索")
+                self.default_search_engine = 'bing'
+            elif not (self.aliyun_access_key_id and self.aliyun_access_key_secret):
+                logger.warning("阿里云IQS密钥未配置，切换到Bing搜索")
+                self.default_search_engine = 'bing'
+                
+        logger.info(f"当前搜索引擎: {self.default_search_engine}")
+    
+    def _create_kuake_client(self) -> Client:
+        """创建阿里云IQS客户端"""
+        config = open_api_models.Config(
+            access_key_id=self.aliyun_access_key_id,
+            access_key_secret=self.aliyun_access_key_secret
+        )
+        config.endpoint = 'iqs.cn-zhangjiakou.aliyuncs.com'
+        return Client(config)
         
     def extract_search_keywords(self, user_query: str) -> List[str]:
         """
@@ -119,6 +169,85 @@ class WebSearchTool:
         logger.info(f"获取到 {len(unique_results)} 条搜索结果")
         return unique_results
     
+    def search_kuake(self, keywords: List[str], max_results: int = 5) -> List[Dict[str, Any]]:
+        """使用阿里云IQS搜索API获取搜索结果"""
+        search_results = []
+        
+        try:
+            client = self._create_kuake_client()
+            
+            for keyword in keywords:
+                try:
+                    request = models.UnifiedSearchRequest(
+                        body=models.UnifiedSearchInput(
+                            query=keyword,
+                            time_range='NoLimit',
+                            contents=models.RequestContents(
+                                summary=True,
+                                main_text=True,
+                            )
+                        )
+                    )
+                    
+                    response = client.unified_search(request)
+                    
+                    if response.body and response.body.page_items:
+                        for item in response.body.page_items[:max_results]:
+                            search_results.append({
+                                'title': item.title or '',
+                                'url': item.link or '',
+                                'snippet': item.snippet or item.summary or '',
+                                'keyword': keyword,
+                                'published_time': item.published_time or '',
+                                'rerank_score': getattr(item, 'rerank_score', None)
+                            })
+                            
+                except TeaException as e:
+                    logger.error(f"阿里云IQS搜索关键词 '{keyword}' 失败: {e.code} - {e.data.get('message', '')}")
+                    continue
+                except Exception as e:
+                    logger.error(f"搜索关键词 '{keyword}' 时出错: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"创建阿里云IQS客户端失败: {e}")
+            return []
+        
+        # 去重并限制结果数量
+        unique_results = []
+        seen_urls = set()
+        
+        for result in search_results:
+            if result['url'] and result['url'] not in seen_urls:
+                unique_results.append(result)
+                seen_urls.add(result['url'])
+                
+                if len(unique_results) >= max_results:
+                    break
+        
+        logger.info(f"阿里云IQS获取到 {len(unique_results)} 条搜索结果")
+        return unique_results
+    
+    def search(self, keywords: List[str], max_results: int = 5, engine: str = None) -> List[Dict[str, Any]]:
+        """统一搜索接口，根据配置选择搜索引擎"""
+        search_engine = engine or self.default_search_engine
+        
+        if search_engine == 'kuake' and KUAKE_AVAILABLE:
+            return self.search_kuake(keywords, max_results)
+        elif search_engine == 'bing':
+            return self.search_bing(keywords, max_results)
+        else:
+            # 回退到可用的搜索引擎
+            if self.bing_api_key:
+                logger.info("回退到Bing搜索")
+                return self.search_bing(keywords, max_results)
+            elif KUAKE_AVAILABLE and self.aliyun_access_key_id:
+                logger.info("回退到阿里云IQS搜索")
+                return self.search_kuake(keywords, max_results)
+            else:
+                logger.error("没有可用的搜索引擎")
+                return []
+     
     def format_search_context(self, search_results: List[Dict[str, Any]]) -> str:
         """
         格式化搜索结果为上下文信息
@@ -175,7 +304,7 @@ class WebSearchTool:
             keywords = self.extract_search_keywords(user_query)
             
             # 2. 执行搜索
-            search_results = self.search_bing(keywords)
+            search_results = self.search(keywords)
             
             # 3. 格式化搜索上下文
             search_context = self.format_search_context(search_results)
